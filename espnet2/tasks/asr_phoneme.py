@@ -475,7 +475,7 @@ class ASRPhonemeTask(AbsTask):
         cls, train: bool = True, inference: bool = False
     ) -> Tuple[str, ...]:
         if not inference:
-            retval = ("speech", "text")
+            retval = ("speech", "text", "phoneme")
         else:
             # Recognition mode
             retval = ("speech",)
