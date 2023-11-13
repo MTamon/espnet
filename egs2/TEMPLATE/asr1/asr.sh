@@ -154,6 +154,14 @@ lm_train_text=   # Text file path of language model training set.
 lm_dev_text=     # Text file path of language model development set.
 lm_test_text=    # Text file path of language model evaluation set.
 nlsyms_txt=none  # Non-linguistic symbol list if existing.
+
+
+## ADD by Mikawa ######################################################
+char_nlsyms_txt=none  # Non-linguistic symbol list for char if existing.
+phone_nlsyms_txt=none # Non-linguistic symbol list for phone if existing.
+#######################################################################
+
+
 cleaner=none     # Text cleaner.
 hyp_cleaner=none # Text cleaner for hypotheses (may be used with external tokenizers)
 g2p=none         # g2p method (needed if token_type=phn).
@@ -392,6 +400,7 @@ bpeprefix="${bpedir}"/bpe
 bpemodel="${bpeprefix}".model
 bpetoken_list="${bpedir}"/tokens.txt
 chartoken_list="${token_listdir}"/char/tokens.txt
+phonetonken_list="${token_listdir}"/phone/tokens.txt ## ADD by Mikawa
 hugging_face_token_list="${token_listdir}/hugging_face_"${hugging_face_model_name_or_path/\//-}/tokens.txt
 # NOTE: keep for future development.
 # shellcheck disable=SC2034
@@ -401,6 +410,9 @@ if [ "${token_type}" = bpe ]; then
     token_list="${bpetoken_list}"
 elif [ "${token_type}" = char ]; then
     token_list="${chartoken_list}"
+    bpemodel=none
+elif [ "${token_type}" = char_phone ]; then
+    token_list=("${phonetonken_list}" "${chartoken_list}")
     bpemodel=none
 elif [ "${token_type}" = word ]; then
     token_list="${wordtoken_list}"
@@ -949,6 +961,46 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ] && ! [[ " ${skip_stages} " =~ [
                 cp ${token_list} ${token_list}".duplicated"
                 awk '!seen[$0]++' ${token_list}".duplicated" > ${token_list}
                 rm ${token_list}".duplicated"
+            fi
+    elif [ "${token_type}" = char_phone ]; then
+        log "Stage 5: Generate character level & phoneme level token_list from ${lm_train_text}"
+
+        _opts="--char_non_linguistic_symbols ${char_nlsyms_txt}"
+        _opts+="--phone_non_linguistic_symbols ${phone_nlsyms_txt}"
+
+        if ${sot_asr}; then
+            # For SOT training, we add <sc> as an user-defined modeling unit.
+            # The input text may be `text^1 <sc> text^2 <sc> text^3`, where `text^n`
+            # refers to the transcription of `speaker n`.
+            # The order of different texts is determined by their start times.
+            _opts+=" --add_nonsplit_symbol <sc>:2 "
+        fi
+
+        token_list_out="${token_list[0]} ${token_list[1]}"
+
+        # The first symbol in token_list must be "<blank>" and the last must be also sos/eos:
+        # 0 is reserved for CTC-blank for ASR and also used as ignore-index in the other task
+        ${python} -m espnet2.bin.char_phoneme_tokenize_text  \
+            --token_type "${token_type}" \
+            --input "${data_feats}/lm_train.txt" --output ${token_list_out} ${_opts} \
+            --field 2- \
+            --cleaner "${cleaner}" \
+            --g2p "${g2p}" \
+            --write_vocabulary true \
+            --add_symbol "${blank}:0" \
+            --add_symbol "${oov}:1" \
+            --add_symbol "${sos_eos}:-1"
+
+            # Duplicated <sc> token may be counted for char token type,
+            # so we shoud remove it
+            if ${sot_asr}; then
+                cp ${token_list[0]} ${token_list[0]}".duplicated"
+                awk '!seen[$0]++' ${token_list[0]}".duplicated" > ${token_list[0]}
+                rm ${token_list[0]}".duplicated"
+                
+                cp ${token_list[1]} ${token_list[1]}".duplicated"
+                awk '!seen[$0]++' ${token_list[1]}".duplicated" > ${token_list[1]}
+                rm ${token_list[1]}".duplicated"
             fi
     elif grep -q "whisper" <<< ${token_type}; then
         log "Stage 5: Generate whisper token_list from ${token_type} tokenizer"
