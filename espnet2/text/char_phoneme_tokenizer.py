@@ -19,6 +19,7 @@ class CharPhonemeTokenizer(AbsTokenizer):
         space_symbol: str = "<space>",
         remove_non_linguistic_symbols: bool = False,
         nonsplit_symbols: Iterable[str] = None,
+        joint_symbol: str = "@",
     ):
         assert check_argument_types()
         self.space_symbol = space_symbol
@@ -26,6 +27,7 @@ class CharPhonemeTokenizer(AbsTokenizer):
         self.char_non_linguistic_symbols = char_non_linguistic_symbols
         self.phone_non_linguistic_symbols = phone_non_linguistic_symbols
         self.nonsplit_symbols = nonsplit_symbols
+        self.joint_symbol = joint_symbol
 
         # prepare char tokenizer
         self.char_tokenizer = CharTokenizer(

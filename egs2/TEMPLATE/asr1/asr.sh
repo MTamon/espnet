@@ -159,6 +159,7 @@ nlsyms_txt=none  # Non-linguistic symbol list if existing.
 ## ADD by Mikawa ######################################################
 char_nlsyms_txt=none  # Non-linguistic symbol list for char if existing.
 phone_nlsyms_txt=none # Non-linguistic symbol list for phone if existing.
+joint_symbol="@"     # Joint symbol for char and phone if existing.
 #######################################################################
 
 
@@ -584,8 +585,21 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ] && ! [[ " ${skip_stages} " =~ [
     log "Stage 1: Data preparation for data/${train_set}, data/${valid_set}, etc."
     # [Task dependent] Need to create data.sh for new corpus
     local/data.sh ${local_data_opts}
-fi
 
+    if [ "${token_type}" = char_phone ]; then
+        all_dsite="${train_set} ${valid_set} ${test_sets}"
+        for _dsite in ${all_dsite}; do
+            trg_path="data/${_dsite}/text"
+            ${python} -m pyscripts.text.add_phoneme \
+                --input ${trg_path} --output ${trg_path}".phoneme" \
+                --joint_symbol ${joint_symbol} \
+                --field 2-
+            rm ${trg_path}
+            cp ${trg_path}".phoneme" ${trg_path}
+            rm ${trg_path}".phoneme"
+        done
+    fi
+fi
 
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ] && ! [[ " ${skip_stages} " =~ [[:space:]]2[[:space:]] ]]; then
     if [ -n "${speed_perturb_factors}" ]; then

@@ -67,6 +67,7 @@ def tokenize(
     delimiter: Optional[str],
     token_type: str,
     space_symbol: str,
+    joint_symbol: str,
     char_non_linguistic_symbols: Optional[str],
     phone_non_linguistic_symbols: Optional[str],
     bpemodel: Optional[str],
@@ -115,6 +116,7 @@ def tokenize(
         remove_non_linguistic_symbols=remove_non_linguistic_symbols,
         g2p_type=g2p,
         nonsplit_symbol=add_nonsplit_symbol,
+        joint_symbol=joint_symbol,
     )
 
     p_counter = Counter()
@@ -247,6 +249,9 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--delimiter", "-d", default=None, help="The delimiter")
     parser.add_argument("--space_symbol", default="<space>", help="The space symbol")
+    parser.add_argument(
+        "--joint_symbol", default="@", help="The joint symbol for char and phone"
+    )
     parser.add_argument("--bpemodel", default=None, help="The bpemodel file path")
     parser.add_argument(
         "--char_non_linguistic_symbols",

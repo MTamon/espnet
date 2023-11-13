@@ -14,6 +14,7 @@ def build_tokenizer(
     phone_non_linguistic_symbols: Union[Path, str, Iterable[str]] = None,
     remove_non_linguistic_symbols: bool = False,
     space_symbol: str = "<space>",
+    joint_symbol: str = "@",
     delimiter: str = None,
     g2p_type: str = None,
     nonsplit_symbol: Iterable[str] = None,
@@ -35,6 +36,7 @@ def build_tokenizer(
             space_symbol=space_symbol,
             remove_non_linguistic_symbols=remove_non_linguistic_symbols,
             nonsplit_symbols=nonsplit_symbol,
+            joint_symbol=joint_symbol,
         )
     else:
         raise ValueError(
