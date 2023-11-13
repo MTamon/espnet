@@ -34,3 +34,4 @@ speed_perturb_factors="0.9 1.0 1.1"
     --auxiliary_data_tags "phoneme" \
     --use_lm false \
     --g2p "pyopenjtalk" \
+    --pre_phonemize true \

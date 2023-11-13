@@ -20,6 +20,7 @@ class CharPhonemeTokenizer(AbsTokenizer):
         remove_non_linguistic_symbols: bool = False,
         nonsplit_symbols: Iterable[str] = None,
         joint_symbol: str = "@",
+        pre_phonemize: bool = False,
     ):
         assert check_argument_types()
         self.space_symbol = space_symbol
@@ -28,6 +29,7 @@ class CharPhonemeTokenizer(AbsTokenizer):
         self.phone_non_linguistic_symbols = phone_non_linguistic_symbols
         self.nonsplit_symbols = nonsplit_symbols
         self.joint_symbol = joint_symbol
+        self.pre_phonemize = pre_phonemize
 
         # prepare char tokenizer
         self.char_tokenizer = CharTokenizer(
@@ -38,12 +40,20 @@ class CharPhonemeTokenizer(AbsTokenizer):
         )
 
         # prepare phone tokenizer
-        self.phone_tokenizer = PhonemeTokenizer(
-            g2p_type=g2p_type,
-            non_linguistic_symbols=phone_non_linguistic_symbols,
-            space_symbol=space_symbol,
-            remove_non_linguistic_symbols=remove_non_linguistic_symbols,
-        )
+        if pre_phonemize:
+            self.phone_tokenizer = PhonemeTokenizer(
+                g2p_type=g2p_type,
+                non_linguistic_symbols=phone_non_linguistic_symbols,
+                space_symbol=space_symbol,
+                remove_non_linguistic_symbols=remove_non_linguistic_symbols,
+            )
+        else:
+            self.phone_tokenizer = CharTokenizer(
+                non_linguistic_symbols=phone_non_linguistic_symbols,
+                space_symbol=space_symbol,
+                remove_non_linguistic_symbols=remove_non_linguistic_symbols,
+                nonsplit_symbols=nonsplit_symbols,
+            )
 
     def __repr__(self):
         return (
@@ -57,7 +67,7 @@ class CharPhonemeTokenizer(AbsTokenizer):
         )
 
     def text2tokens(self, line: str) -> List[str]:
-        text_line, phone_line = line.split("@")
+        text_line, phone_line = line.split("@") if self.pre_phonemize else (line, line)
         text_tokens = self.char_tokenizer.text2tokens(text_line)
         phone_tokens = self.phone_tokenizer.text2tokens(phone_line)
 

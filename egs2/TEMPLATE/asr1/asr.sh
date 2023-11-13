@@ -160,6 +160,7 @@ nlsyms_txt=none  # Non-linguistic symbol list if existing.
 char_nlsyms_txt=none  # Non-linguistic symbol list for char if existing.
 phone_nlsyms_txt=none # Non-linguistic symbol list for phone if existing.
 joint_symbol="@"     # Joint symbol for char and phone if existing.
+pre_phonemize=true   # Whether to phonemize before tokenization.
 #######################################################################
 
 
@@ -586,7 +587,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ] && ! [[ " ${skip_stages} " =~ [
     # [Task dependent] Need to create data.sh for new corpus
     local/data.sh ${local_data_opts}
 
-    if [ "${token_type}" = char_phone ]; then
+    if [ "${token_type}" = char_phone && ${pre_phonemize} ]; then
         all_dsite="${train_set} ${valid_set} ${test_sets}"
         for _dsite in ${all_dsite}; do
             trg_path="data/${_dsite}/text"
@@ -1003,7 +1004,8 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ] && ! [[ " ${skip_stages} " =~ [
             --write_vocabulary true \
             --add_symbol "${blank}:0" \
             --add_symbol "${oov}:1" \
-            --add_symbol "${sos_eos}:-1"
+            --add_symbol "${sos_eos}:-1" \
+            --pre_phonemize "${pre_phonemize}"
 
             # Duplicated <sc> token may be counted for char token type,
             # so we shoud remove it

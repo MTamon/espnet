@@ -81,6 +81,7 @@ def tokenize(
     cleaner: Optional[str],
     g2p: Optional[str],
     add_nonsplit_symbol: List[str],
+    pre_phonemize: bool,
 ):
     assert check_argument_types()
 
@@ -117,6 +118,7 @@ def tokenize(
         g2p_type=g2p,
         nonsplit_symbol=add_nonsplit_symbol,
         joint_symbol=joint_symbol,
+        pre_phonemize=pre_phonemize,
     )
 
     p_counter = Counter()
@@ -324,6 +326,12 @@ def get_parser() -> argparse.ArgumentParser:
         default=[],
         action="append",
         help="Append symbol that is nonsplit e.g. --add_nonsplit_symbol '<sc>:2",
+    )
+    group.add_argument(
+        "--pre_phonemize",
+        type=str2bool,
+        default=False,
+        help="Pre-phonemize text before tokenization",
     )
 
     return parser

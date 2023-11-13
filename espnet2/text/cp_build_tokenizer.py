@@ -24,6 +24,7 @@ def build_tokenizer(
     whisper_language: str = None,
     whisper_task: str = None,
     sot_asr: bool = False,
+    pre_phonemize: bool = False,
 ) -> AbsTokenizer:
     """A helper function to instantiate Tokenizer"""
     assert check_argument_types()
@@ -37,6 +38,7 @@ def build_tokenizer(
             remove_non_linguistic_symbols=remove_non_linguistic_symbols,
             nonsplit_symbols=nonsplit_symbol,
             joint_symbol=joint_symbol,
+            pre_phonemize=pre_phonemize,
         )
     else:
         raise ValueError(
