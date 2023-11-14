@@ -1247,8 +1247,22 @@ fi
 if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ] && ! [[ " ${skip_stages} " =~ [[:space:]]9[[:space:]] ]]; then
     log "Stage 9: Ngram Training: train_set=${data_feats}/lm_train.txt"
     mkdir -p ${ngram_exp}
-    cut -f 2- -d " " ${data_feats}/lm_train.txt | lmplz -S "20%" --discount_fallback -o ${ngram_num} - >${ngram_exp}/${ngram_num}gram.arpa
-    build_binary -s ${ngram_exp}/${ngram_num}gram.arpa ${ngram_exp}/${ngram_num}gram.bin
+    if [ "${token_type}" = char_phone ]; then
+        if [ ${pre_phonemize} ]; then
+            cat ${data_feats}/lm_train.txt | awk -F'['${joint_symbol}' ]' '{print $2}' | lmplz -S "20%" --discount_fallback -o ${ngram_num} - >${ngram_exp}/${ngram_num}gram_char.arpa
+            cat ${data_feats}/lm_train.txt | awk -F'['${joint_symbol}' ]' '{print $3}' | lmplz -S "20%" --discount_fallback -o ${ngram_num} - >${ngram_exp}/${ngram_num}gram_phone.arpa
+            build_binary -s ${ngram_exp}/${ngram_num}gram_char.arpa ${ngram_exp}/${ngram_num}gram_char.bin
+            build_binary -s ${ngram_exp}/${ngram_num}gram_phone.arpa ${ngram_exp}/${ngram_num}gram_phone.bin
+        else
+            cut -f 2- -d " " ${data_feats}/lm_train.txt | lmplz -S "20%" --discount_fallback -o ${ngram_num} - >${ngram_exp}/${ngram_num}gram_char.arpa
+            cut -f 2- -d " " ${data_feats}/lm_train.txt | ${python} -m pyscripts.text.for_ngram_phone \ | lmplz -S "20%" --discount_fallback -o ${ngram_num} - >${ngram_exp}/${ngram_num}gram_phone.arpa
+            build_binary -s ${ngram_exp}/${ngram_num}gram_char.arpa ${ngram_exp}/${ngram_num}gram_char.bin
+            build_binary -s ${ngram_exp}/${ngram_num}gram_phone.arpa ${ngram_exp}/${ngram_num}gram_phone.bin
+        fi
+    else
+        cut -f 2- -d " " ${data_feats}/lm_train.txt | lmplz -S "20%" --discount_fallback -o ${ngram_num} - >${ngram_exp}/${ngram_num}gram.arpa
+        build_binary -s ${ngram_exp}/${ngram_num}gram.arpa ${ngram_exp}/${ngram_num}gram.bin
+    fi
 fi
 
 

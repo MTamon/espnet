@@ -87,6 +87,9 @@ from espnet2.utils.get_default_kwargs import get_default_kwargs
 from espnet2.utils.nested_dict_action import NestedDictAction
 from espnet2.utils.types import float_or_none, int_or_none, str2bool, str_or_none
 
+# TODO: tokenizer setting for char_phoneme_tokenizer (adaptation for pre_phonemize)
+# TODO: adaptation for each-ngram model (e.g. N-gram_char, N-gram_phoneme)
+
 frontend_choices = ClassChoices(
     name="frontend",
     classes=dict(
@@ -239,6 +242,7 @@ class ASRPhonemeTask(AbsTask):
         required = parser.get_default("required")
         required += ["token_list"]
 
+        # TODO: this made be multi-input
         group.add_argument(
             "--token_list",
             type=str_or_none,
