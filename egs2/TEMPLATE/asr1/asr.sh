@@ -413,6 +413,9 @@ if [ "${token_type}" = bpe ]; then
 elif [ "${token_type}" = char ]; then
     token_list="${chartoken_list}"
     bpemodel=none
+elif [ "${token_type}" = aux_phone ]; then
+    token_list=("${phonetonken_list}" "${chartoken_list}")
+    bpemodel=none
 elif [ "${token_type}" = char_phone ]; then
     token_list=("${phonetonken_list}" "${chartoken_list}")
     bpemodel=none
@@ -587,7 +590,10 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ] && ! [[ " ${skip_stages} " =~ [
     # [Task dependent] Need to create data.sh for new corpus
     local/data.sh ${local_data_opts}
 
+    lmtrain="data/lm_train.txt"
     if [ "${token_type}" = char_phone && ${pre_phonemize} ]; then
+        ${python} -m pip install pyopenjtalk
+        ${python} -m pip install mecab-python3
         all_dsite="${train_set} ${valid_set} ${test_sets}"
         for _dsite in ${all_dsite}; do
             trg_path="data/${_dsite}/text"
@@ -598,6 +604,27 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ] && ! [[ " ${skip_stages} " =~ [
             rm ${trg_path}
             cp ${trg_path}".phoneme" ${trg_path}
             rm ${trg_path}".phoneme"
+        done
+    elif [ "${token_type}" = aux_phone ]; then
+        ${python} -m pip install mecab-python3
+        ${python} -m pip install pyopenjtalk
+        all_dsite="${train_set} ${valid_set} ${test_sets}"
+        error_path="data/errors"
+        rm -f ${error_path}
+        for _dsite in ${all_dsite}; do
+            trg_path="data/${_dsite}/text"
+            phn_path="data/${_dsite}/phoneme"
+            ${python} -m pyscripts.text.gen_phoneme \
+                --input ${trg_path} \
+                --output_phone ${phn_path} \
+                --output_chars ${trg_path}".char" \
+                --output4train ${lmtrain} \
+                --output_error ${error_path} \
+                --field 2- \
+                --joint_symbol ${joint_symbol}
+            rm ${trg_path}
+            cp ${trg_path}".char" ${trg_path}
+            rm ${trg_path}".char"
         done
     fi
 fi
@@ -1018,6 +1045,49 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ] && ! [[ " ${skip_stages} " =~ [
                 awk '!seen[$0]++' ${token_list[1]}".duplicated" > ${token_list[1]}
                 rm ${token_list[1]}".duplicated"
             fi
+    elif [ "${token_type}" = aux_phone ]; then
+        log "Stage 5: Generate character level & phoneme level token_list from ${lm_train_text}"
+
+        _opts="--char_non_linguistic_symbols ${char_nlsyms_txt}"
+        _opts+="--phone_non_linguistic_symbols ${phone_nlsyms_txt}"
+
+        if ${sot_asr}; then
+            # For SOT training, we add <sc> as an user-defined modeling unit.
+            # The input text may be `text^1 <sc> text^2 <sc> text^3`, where `text^n`
+            # refers to the transcription of `speaker n`.
+            # The order of different texts is determined by their start times.
+            _opts+=" --add_nonsplit_symbol <sc>:2 "
+        fi
+
+        token_list_out="${token_list[0]} ${token_list[1]}"
+        rm -f "${data_feats}/lm_train.txt"
+        cp "${lmtrain}" "${data_feats}/lm_train.txt"
+
+        # The first symbol in token_list must be "<blank>" and the last must be also sos/eos:
+        # 0 is reserved for CTC-blank for ASR and also used as ignore-index in the other task
+        ${python} -m espnet2.bin.char_phoneme_tokenize_text  \
+            --token_type "${token_type}" \
+            --input "${data_feats}/lm_train.txt" --output ${token_list_out} ${_opts} \
+            --field 2- \
+            --cleaner "${cleaner}" \
+            --g2p "${g2p}" \
+            --write_vocabulary true \
+            --add_symbol "${blank}:0" \
+            --add_symbol "${oov}:1" \
+            --add_symbol "${sos_eos}:-1" \
+            --pre_phonemize "${pre_phonemize}"
+
+            # Duplicated <sc> token may be counted for char token type,
+            # so we shoud remove it
+            if ${sot_asr}; then
+                cp ${token_list[0]} ${token_list[0]}".duplicated"
+                awk '!seen[$0]++' ${token_list[0]}".duplicated" > ${token_list[0]}
+                rm ${token_list[0]}".duplicated"
+                
+                cp ${token_list[1]} ${token_list[1]}".duplicated"
+                awk '!seen[$0]++' ${token_list[1]}".duplicated" > ${token_list[1]}
+                rm ${token_list[1]}".duplicated"
+            fi
     elif grep -q "whisper" <<< ${token_type}; then
         log "Stage 5: Generate whisper token_list from ${token_type} tokenizer"
 
@@ -1342,22 +1412,45 @@ if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ] && ! [[ " ${skip_stages} " =~
         _opts+="--use_lang_prompt ${use_lang_prompt} "
         _opts+="--use_nlp_prompt ${use_nlp_prompt} "
     fi
+    if [ ${token_type} = aux_phone ]; then
+        _opts+="--train_data_path_and_name_and_type ${_asr_train_dir}/phoneme,phoneme,text "
+        _opts+="--valid_data_path_and_name_and_type ${_asr_valid_dir}/phoneme,phoneme,text "
+        token_list_out="${token_list[0]} ${token_list[1]}"
+    fi
 
-    # shellcheck disable=SC2046,SC2086
-    ${train_cmd} JOB=1:"${_nj}" "${_logdir}"/stats.JOB.log \
-        ${python} -m espnet2.bin.${asr_task}_train \
-            --collect_stats true \
-            --use_preprocessor true \
-            --bpemodel "${bpemodel}" \
-            --token_type "${token_type}" \
-            --token_list "${token_list}" \
-            --non_linguistic_symbols "${nlsyms_txt}" \
-            --cleaner "${cleaner}" \
-            --g2p "${g2p}" \
-            --train_shape_file "${_logdir}/train.JOB.scp" \
-            --valid_shape_file "${_logdir}/valid.JOB.scp" \
-            --output_dir "${_logdir}/stats.JOB" \
-            ${_opts} ${asr_args} || { cat $(grep -l -i error "${_logdir}"/stats.*.log) ; exit 1; }
+    if [ ${token_type} = aux_phone ]; then
+        # shellcheck disable=SC2046,SC2086
+        ${train_cmd} JOB=1:"${_nj}" "${_logdir}"/stats.JOB.log \
+            ${python} -m espnet2.bin.${asr_task}_train \
+                --collect_stats true \
+                --use_preprocessor true \
+                --bpemodel "${bpemodel}" \
+                --token_type "${token_type}" \
+                --token_list "${token_list_out}" \
+                --non_linguistic_symbols "${nlsyms_txt}" \
+                --cleaner "${cleaner}" \
+                --g2p "${g2p}" \
+                --train_shape_file "${_logdir}/train.JOB.scp" \
+                --valid_shape_file "${_logdir}/valid.JOB.scp" \
+                --output_dir "${_logdir}/stats.JOB" \
+                ${_opts} ${asr_args} || { cat $(grep -l -i error "${_logdir}"/stats.*.log) ; exit 1; }
+    else
+        # shellcheck disable=SC2046,SC2086
+        ${train_cmd} JOB=1:"${_nj}" "${_logdir}"/stats.JOB.log \
+            ${python} -m espnet2.bin.${asr_task}_train \
+                --collect_stats true \
+                --use_preprocessor true \
+                --bpemodel "${bpemodel}" \
+                --token_type "${token_type}" \
+                --token_list "${token_list}" \
+                --non_linguistic_symbols "${nlsyms_txt}" \
+                --cleaner "${cleaner}" \
+                --g2p "${g2p}" \
+                --train_shape_file "${_logdir}/train.JOB.scp" \
+                --valid_shape_file "${_logdir}/valid.JOB.scp" \
+                --output_dir "${_logdir}/stats.JOB" \
+                ${_opts} ${asr_args} || { cat $(grep -l -i error "${_logdir}"/stats.*.log) ; exit 1; }
+    fi
 
     # 4. Aggregate shape files
     _opts=

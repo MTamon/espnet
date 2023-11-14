@@ -21,7 +21,7 @@ speed_perturb_factors="0.9 1.0 1.1"
 ./asr.sh \
     --ngpu 4 \
     --lang jp \
-    --token_type char \
+    --token_type aux_phone \
     --feats_type raw \
     --asr_config "${asr_config}" \
     --inference_config "${inference_config}" \

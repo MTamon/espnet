@@ -31,7 +31,8 @@ speed_perturb_factors="0.9 1.0 1.1"
     --test_sets "${test_sets}" \
     --speed_perturb_factors "${speed_perturb_factors}" \
     --lm_train_text "data/train_nodev/text" "$@" \
-    --auxiliary_data_tags "phoneme" \
     --use_lm false \
     --g2p "pyopenjtalk" \
     --pre_phonemize true \
+
+    # --auxiliary_data_tags "phoneme" \
