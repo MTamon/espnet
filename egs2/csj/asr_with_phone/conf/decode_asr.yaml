@@ -1,0 +1,7 @@
+lm_weight: 0.3
+beam_size: 20
+penalty: 0.0
+maxlenratio: 0.0
+minlenratio: 0.0
+char_ctc_weight: 0.2
+phone_ctc_weight: 0.2

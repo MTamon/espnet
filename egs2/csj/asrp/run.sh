@@ -21,7 +21,7 @@ speed_perturb_factors="0.9 1.0 1.1"
 ./asr.sh \
     --ngpu 1 \
     --lang jp \
-    --token_type char \
+    --token_type char_phone \
     --feats_type raw \
     --asr_config "${asr_config}" \
     --inference_config "${inference_config}" \
@@ -30,4 +30,9 @@ speed_perturb_factors="0.9 1.0 1.1"
     --valid_set "${valid_set}" \
     --test_sets "${test_sets}" \
     --speed_perturb_factors "${speed_perturb_factors}" \
-    --lm_train_text "data/train_nodev/text" "$@"
+    --lm_train_text "data/train_nodev/text" "$@" \
+    --use_lm false \
+    --g2p "pyopenjtalk" \
+    --pre_phonemize true \
+
+    # --auxiliary_data_tags "phoneme" \
