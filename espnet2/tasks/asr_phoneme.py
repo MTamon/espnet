@@ -82,10 +82,13 @@ from espnet2.train.preprocessor import (
     CommonPreprocessor,
     CommonPreprocessor_multi,
 )
+from espnet2.train.preprocessor_phone import ASRPPreprocessor
 from espnet2.train.trainer import Trainer
 from espnet2.utils.get_default_kwargs import get_default_kwargs
 from espnet2.utils.nested_dict_action import NestedDictAction
 from espnet2.utils.types import float_or_none, int_or_none, str2bool, str_or_none
+
+from espnet2.asr.espnet_model_phoneme import ESPnetASRModelWithPhoneme
 
 # TODO: tokenizer setting for char_phoneme_tokenizer (adaptation for pre_phonemize)
 # TODO: adaptation for each-ngram model (e.g. N-gram_char, N-gram_phoneme)
@@ -127,6 +130,7 @@ model_choices = ClassChoices(
         espnet=ESPnetASRModel,
         maskctc=MaskCTCModel,
         pit_espnet=PITESPnetModel,
+        asrp=ESPnetASRModelWithPhoneme,
     ),
     type_check=AbsESPnetModel,
     default="espnet",
@@ -197,6 +201,7 @@ preprocessor_choices = ClassChoices(
     "preprocessor",
     classes=dict(
         default=CommonPreprocessor,
+        asrp=ASRPPreprocessor,
         multi=CommonPreprocessor_multi,
     ),
     type_check=AbsPreprocessor,
@@ -312,6 +317,8 @@ class ASRPhonemeTask(AbsTask):
                 "char",
                 "word",
                 "phn",
+                "aux_phone",
+                "char_phone",
                 "hugging_face",
                 "whisper_en",
                 "whisper_multilingual",
@@ -325,7 +332,12 @@ class ASRPhonemeTask(AbsTask):
             help="The model file of sentencepiece",
         )
         parser.add_argument(
-            "--non_linguistic_symbols",
+            "--char_non_linguistic_symbols",
+            type=str_or_none,
+            help="non_linguistic_symbols file path",
+        )
+        parser.add_argument(
+            "--phone_non_linguistic_symbols",
             type=str_or_none,
             help="non_linguistic_symbols file path",
         )
@@ -437,7 +449,8 @@ class ASRPhonemeTask(AbsTask):
                 token_type=args.token_type,
                 token_list=args.token_list,
                 bpemodel=args.bpemodel,
-                non_linguistic_symbols=args.non_linguistic_symbols,
+                char_non_linguistic_symbols=args.char_non_linguistic_symbols,
+                phone_non_linguistic_symbols=args.phone_non_linguistic_symbols,
                 text_cleaner=args.cleaner,
                 g2p_type=args.g2p,
                 # NOTE(kamo): Check attribute existence for backward compatibility
@@ -500,31 +513,48 @@ class ASRPhonemeTask(AbsTask):
         return retval
 
     @classmethod
-    def build_model(cls, args: argparse.Namespace) -> ESPnetASRModel:
+    def build_model(cls, args: argparse.Namespace) -> ESPnetASRModelWithPhoneme:
         assert check_argument_types()
         if isinstance(args.token_list, str):
-            with open(args.token_list, encoding="utf-8") as f:
-                token_list = [line.rstrip() for line in f]
+            _phone_token_list, _char_token_list = args.token_list.split(",")
+            with open(_char_token_list, encoding="utf-8") as f:
+                char_token_list = [line.rstrip() for line in f]
+            with open(_phone_token_list, encoding="utf-8") as f:
+                phone_token_list = [line.rstrip() for line in f]
 
             # Overwriting token_list to keep it as "portable".
-            args.token_list = list(token_list)
-        elif isinstance(args.token_list, (tuple, list)):
-            token_list = list(args.token_list)
+            setattr(args, "char_token_list", list(char_token_list))
+            setattr(args, "phone_token_list", list(phone_token_list))
         else:
-            raise RuntimeError("token_list must be str or list")
+            raise RuntimeError("token_list must be str")
 
         # If use multi-blank transducer criterion,
         # big blank symbols are added just before the standard blank
         if args.model_conf.get("transducer_multi_blank_durations", None) is not None:
+            # char
             sym_blank = args.model_conf.get("sym_blank", "<blank>")
-            blank_idx = token_list.index(sym_blank)
+            blank_idx = char_token_list.index(sym_blank)
             for dur in args.model_conf.get("transducer_multi_blank_durations"):
-                if f"<blank{dur}>" not in token_list:  # avoid this during inference
-                    token_list.insert(blank_idx, f"<blank{dur}>")
-            args.token_list = token_list
+                if (
+                    f"<blank{dur}>" not in char_token_list
+                ):  # avoid this during inference
+                    char_token_list.insert(blank_idx, f"<blank{dur}>")
+            args.char_token_list = char_token_list
 
-        vocab_size = len(token_list)
-        logging.info(f"Vocabulary size: {vocab_size }")
+            # phoneme
+            sym_blank = args.model_conf.get("sym_blank", "<blank>")
+            blank_idx = phone_token_list.index(sym_blank)
+            for dur in args.model_conf.get("transducer_multi_blank_durations"):
+                if (
+                    f"<blank{dur}>" not in phone_token_list
+                ):  # avoid this during inference
+                    phone_token_list.insert(blank_idx, f"<blank{dur}>")
+            args.phone_token_list = phone_token_list
+
+        char_vocab_size = len(char_token_list)
+        phone_vocab_size = len(phone_token_list)
+        logging.info(f"Vocabulary size: {char_vocab_size }")
+        logging.info(f"Vocabulary size: {phone_vocab_size }")
 
         # 1. frontend
         if args.input_size is None:
@@ -584,20 +614,20 @@ class ASRPhonemeTask(AbsTask):
 
             if args.decoder == "transducer":
                 decoder = decoder_class(
-                    vocab_size,
+                    char_vocab_size,
                     embed_pad=0,
                     **args.decoder_conf,
                 )
 
                 joint_network = JointNetwork(
-                    vocab_size,
+                    char_vocab_size,
                     encoder.output_size(),
                     decoder.dunits,
                     **args.joint_net_conf,
                 )
             else:
                 decoder = decoder_class(
-                    vocab_size=vocab_size,
+                    vocab_size=char_vocab_size,
                     encoder_output_size=encoder_output_size,
                     **args.decoder_conf,
                 )
@@ -607,8 +637,15 @@ class ASRPhonemeTask(AbsTask):
             joint_network = None
 
         # 6. CTC
-        ctc = CTC(
-            odim=vocab_size, encoder_output_size=encoder_output_size, **args.ctc_conf
+        char_ctc = CTC(
+            odim=char_vocab_size,
+            encoder_output_size=encoder_output_size,
+            **args.ctc_conf,
+        )
+        phone_ctc = CTC(
+            odim=phone_vocab_size,
+            encoder_output_size=encoder_output_size,
+            **args.ctc_conf,
         )
 
         # 7. Build model
@@ -617,7 +654,10 @@ class ASRPhonemeTask(AbsTask):
         except AttributeError:
             model_class = model_choices.get_class("espnet")
         model = model_class(
-            vocab_size=vocab_size,
+            char_vocab_size=char_vocab_size,
+            phone_vocab_size=phone_vocab_size,
+            char_token_list=char_token_list,
+            phone_token_list=phone_token_list,
             frontend=frontend,
             specaug=specaug,
             normalize=normalize,
@@ -625,9 +665,9 @@ class ASRPhonemeTask(AbsTask):
             encoder=encoder,
             postencoder=postencoder,
             decoder=decoder,
-            ctc=ctc,
+            phone_ctc=phone_ctc,
+            char_ctc=char_ctc,
             joint_network=joint_network,
-            token_list=token_list,
             **args.model_conf,
         )
 

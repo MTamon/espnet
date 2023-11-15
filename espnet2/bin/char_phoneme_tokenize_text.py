@@ -79,9 +79,7 @@ def tokenize(
     cutoff: int,
     add_symbol: List[str],
     cleaner: Optional[str],
-    g2p: Optional[str],
     add_nonsplit_symbol: List[str],
-    pre_phonemize: bool,
 ):
     assert check_argument_types()
 
@@ -97,7 +95,7 @@ def tokenize(
         c_fout = sys.stdout
         p_fout = sys.stdout
     else:
-        char_output, phone_output = output.split(" ")
+        phone_output, char_output = output.split(",")
         c_p = Path(char_output)
         c_p.parent.mkdir(parents=True, exist_ok=True)
         c_fout = c_p.open("w", encoding="utf-8")
@@ -109,16 +107,12 @@ def tokenize(
     cleaner = TextCleaner(cleaner)
     tokenizer = build_tokenizer(
         token_type=token_type,
-        bpemodel=bpemodel,
-        delimiter=delimiter,
-        space_symbol=space_symbol,
         char_non_linguistic_symbols=char_non_linguistic_symbols,
         phone_non_linguistic_symbols=phone_non_linguistic_symbols,
         remove_non_linguistic_symbols=remove_non_linguistic_symbols,
-        g2p_type=g2p,
-        nonsplit_symbol=add_nonsplit_symbol,
+        space_symbol=space_symbol,
         joint_symbol=joint_symbol,
-        pre_phonemize=pre_phonemize,
+        nonsplit_symbol=add_nonsplit_symbol,
     )
 
     p_counter = Counter()
@@ -191,6 +185,8 @@ def tokenize(
 
         # e.g. idx=0  -> append as the first symbol
         # e.g. idx=-1 -> append as the last symbol
+        c_idx = idx
+        p_idx = idx
         if idx < 0:
             c_idx = len(c_words_and_counts) + 1 + idx
             p_idx = len(p_words_and_counts) + 1 + idx
@@ -246,7 +242,7 @@ def get_parser() -> argparse.ArgumentParser:
         "--token_type",
         "-t",
         default="char",
-        choices=["char", "bpe", "word", "phn"],
+        choices=["char", "bpe", "word", "phn", "aux_phone", "char_phone"],
         help="Token type",
     )
     parser.add_argument("--delimiter", "-d", default=None, help="The delimiter")
@@ -286,13 +282,6 @@ def get_parser() -> argparse.ArgumentParser:
         default=None,
         help="Apply text cleaning",
     )
-    parser.add_argument(
-        "--g2p",
-        type=str_or_none,
-        choices=g2p_choices,
-        default=None,
-        help="Specify g2p method if --token_type=phn",
-    )
 
     group = parser.add_argument_group("write_vocabulary mode related")
     group.add_argument(
@@ -326,12 +315,6 @@ def get_parser() -> argparse.ArgumentParser:
         default=[],
         action="append",
         help="Append symbol that is nonsplit e.g. --add_nonsplit_symbol '<sc>:2",
-    )
-    group.add_argument(
-        "--pre_phonemize",
-        type=str2bool,
-        default=False,
-        help="Pre-phonemize text before tokenization",
     )
 
     return parser
