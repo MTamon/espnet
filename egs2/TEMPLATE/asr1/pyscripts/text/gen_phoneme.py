@@ -12,8 +12,8 @@ tagger.parse("")  # avoid bug
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
-    parser.add_argument("--output_phone", type=str, required=True)
-    parser.add_argument("--output_chars", type=str, required=True)
+    parser.add_argument("--output", type=str, required=True)
+    # parser.add_argument("--output_chars", type=str, required=True)
     parser.add_argument("--output_error", type=str, required=True)
     parser.add_argument("--output4train", type=str, default=None)
     parser.add_argument("--field", type=str, default="2-")
@@ -73,11 +73,13 @@ args = parse_args()
 _cils, _slic = field2slice(args.field)
 
 with open(args.input, "r", encoding="utf-8") as fin:
-    fout_c = open(args.output_chars, "w", encoding="utf-8")
-    fout_p = open(args.output_phone, "w", encoding="utf-8")
+    # fout_c = open(args.output_chars, "w", encoding="utf-8")
+    fout_p = open(args.output, "w", encoding="utf-8")
     fout_e = open(args.output_error, "a", encoding="utf-8")
     fout_t = (
-        open(args.output4train, "w", encoding="utf-8") if args.output4train else None
+        open(args.output4train, "w", encoding="utf-8")
+        if args.output4train != "NONE"
+        else None
     )
 
     for line in fin:
@@ -94,18 +96,18 @@ with open(args.input, "r", encoding="utf-8") as fin:
         # katakana = tagger.parse(text).strip()
         phones = pyopenjtalk.g2p(text)
 
-        if "pau" in phones:
-            fout_e.write(args.delimiter.join([textinfo, phones]) + "\n")
-            continue
+        # if "pau" in phones:
+        #     fout_e.write(args.delimiter.join([textinfo, phones]) + "\n")
+        #     continue
 
         output_text = args.delimiter.join([info, phones])
         fout_p.write(output_text + "\n")
-        fout_c.write(textinfo + "\n")
+        # fout_c.write(textinfo + "\n")
         if fout_t:
             texts = args.joint_symbol.join([textinfo, phones])
             fout_t.write(texts + "\n")
 
-    fout_c.close()
+    # fout_c.close()
     fout_p.close()
     fout_e.close()
     if fout_t:

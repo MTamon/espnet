@@ -161,6 +161,7 @@ char_nlsyms_txt=none  # Non-linguistic symbol list for char if existing.
 phone_nlsyms_txt=none # Non-linguistic symbol list for phone if existing.
 joint_symbol="@"     # Joint symbol for char and phone if existing.
 pre_phonemize=true   # Whether to phonemize before tokenization.
+asr_model=asrp
 #######################################################################
 
 
@@ -372,6 +373,17 @@ else
         ref_text_names_str+="text_spk${n} "
     done
 fi
+
+if [ "${token_type}" = char_phone ]; then
+    # For char_phone, text file path and name are text_char and text_phone
+    ref_text_files_str+="phoneme "
+    ref_text_names_str+="phoneme "
+elif [ "${token_type}" = aux_phone ]; then
+    # For aux_phone, text file path and name are text_aux and text_phone
+    ref_text_files_str+="phoneme "
+    ref_text_names_str+="phoneme "
+fi
+
 # shellcheck disable=SC2206
 ref_text_files=(${ref_text_files_str// / })
 # shellcheck disable=SC2206
@@ -584,13 +596,13 @@ log "Skipped stages: ${skip_stages}"
 # ========================== Main stages start from here. ==========================
 
 
+lmtrain="data/lm_train.txt"
 
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ] && ! [[ " ${skip_stages} " =~ [[:space:]]1[[:space:]] ]]; then
     log "Stage 1: Data preparation for data/${train_set}, data/${valid_set}, etc."
     # [Task dependent] Need to create data.sh for new corpus
     local/data.sh ${local_data_opts}
 
-    lmtrain="data/lm_train.txt"
     if [ "${token_type}" = char_phone && ${pre_phonemize} ]; then
         ${python} -m pip install pyopenjtalk
         ${python} -m pip install mecab-python3
@@ -614,34 +626,38 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ] && ! [[ " ${skip_stages} " =~ [
         for _dsite in ${all_dsite}; do
             trg_path="data/${_dsite}/text"
             phn_path="data/${_dsite}/phoneme"
+            if [ ${_dsite} = ${train_set} ]; then
+                _lmtrain="${lmtrain}"
+            else
+                _lmtrain="NONE"
+            fi
             ${python} -m pyscripts.text.gen_phoneme \
                 --input ${trg_path} \
-                --output_phone ${phn_path} \
-                --output_chars ${trg_path}".char" \
-                --output4train ${lmtrain} \
+                --output ${phn_path} \
+                --output4train ${_lmtrain} \
                 --output_error ${error_path} \
                 --field 2- \
                 --joint_symbol ${joint_symbol}
-            rm ${trg_path}
-            cp ${trg_path}".char" ${trg_path}
-            rm ${trg_path}".char"
         done
     fi
 fi
 
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ] && ! [[ " ${skip_stages} " =~ [[:space:]]2[[:space:]] ]]; then
     if [ -n "${speed_perturb_factors}" ]; then
-       log "Stage 2: Speed perturbation: data/${train_set} -> data/${train_set}_sp"
-       for factor in ${speed_perturb_factors}; do
-           if python3 -c "assert ${factor} != 1.0" 2>/dev/null; then
-               scripts/utils/perturb_data_dir_speed.sh \
-                   ${ref_text_files_str:+--utt_extra_files "${ref_text_files_str}"} \
-                   "${factor}" "data/${train_set}" "data/${train_set}_sp${factor}"
-               _dirs+="data/${train_set}_sp${factor} "
-           else
-               # If speed factor is 1, same as the original
-               _dirs+="data/${train_set} "
-           fi
+        log "Stage 2: Speed perturbation: data/${train_set} -> data/${train_set}_sp"
+        for factor in ${speed_perturb_factors}; do
+            if python3 -c "assert ${factor} != 1.0" 2>/dev/null; then
+                scripts/utils/perturb_data_dir_speed.sh \
+                    ${ref_text_files_str:+--utt_extra_files "${ref_text_files_str}"} \
+                    "${factor}" "data/${train_set}" "data/${train_set}_sp${factor}"
+                # if [ ${token_type} = aux_phone ]; then
+                #     cp "data/${train_set}/phoneme" "data/${train_set}_sp${factor}/phoneme"
+                # fi
+                _dirs+="data/${train_set}_sp${factor} "
+            else
+                # If speed factor is 1, same as the original
+                _dirs+="data/${train_set} "
+            fi
         done
         utils/combine_data.sh \
             ${ref_text_files_str:+--extra_files "${ref_text_files_str}"} \
@@ -1008,7 +1024,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ] && ! [[ " ${skip_stages} " =~ [
         log "Stage 5: Generate character level & phoneme level token_list from ${lm_train_text}"
 
         _opts="--char_non_linguistic_symbols ${char_nlsyms_txt}"
-        _opts+="--phone_non_linguistic_symbols ${phone_nlsyms_txt}"
+        _opts+=" --phone_non_linguistic_symbols ${phone_nlsyms_txt}"
 
         if ${sot_asr}; then
             # For SOT training, we add <sc> as an user-defined modeling unit.
@@ -1032,7 +1048,6 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ] && ! [[ " ${skip_stages} " =~ [
             --add_symbol "${blank}:0" \
             --add_symbol "${oov}:1" \
             --add_symbol "${sos_eos}:-1" \
-            --pre_phonemize "${pre_phonemize}"
 
             # Duplicated <sc> token may be counted for char token type,
             # so we shoud remove it
@@ -1049,7 +1064,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ] && ! [[ " ${skip_stages} " =~ [
         log "Stage 5: Generate character level & phoneme level token_list from ${lm_train_text}"
 
         _opts="--char_non_linguistic_symbols ${char_nlsyms_txt}"
-        _opts+="--phone_non_linguistic_symbols ${phone_nlsyms_txt}"
+        _opts+=" --phone_non_linguistic_symbols ${phone_nlsyms_txt}"
 
         if ${sot_asr}; then
             # For SOT training, we add <sc> as an user-defined modeling unit.
@@ -1059,7 +1074,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ] && ! [[ " ${skip_stages} " =~ [
             _opts+=" --add_nonsplit_symbol <sc>:2 "
         fi
 
-        token_list_out="${token_list[0]} ${token_list[1]}"
+        token_list_out="${token_list[0]},${token_list[1]}"
         rm -f "${data_feats}/lm_train.txt"
         cp "${lmtrain}" "${data_feats}/lm_train.txt"
 
@@ -1070,12 +1085,10 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ] && ! [[ " ${skip_stages} " =~ [
             --input "${data_feats}/lm_train.txt" --output ${token_list_out} ${_opts} \
             --field 2- \
             --cleaner "${cleaner}" \
-            --g2p "${g2p}" \
             --write_vocabulary true \
             --add_symbol "${blank}:0" \
             --add_symbol "${oov}:1" \
             --add_symbol "${sos_eos}:-1" \
-            --pre_phonemize "${pre_phonemize}"
 
             # Duplicated <sc> token may be counted for char token type,
             # so we shoud remove it
@@ -1320,7 +1333,7 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ] && ! [[ " ${skip_stages} " =~ [
     if [ "${token_type}" = char_phone ]; then
         if [ ${pre_phonemize} ]; then
             cat ${data_feats}/lm_train.txt | awk -F'['${joint_symbol}' ]' '{print $2}' | lmplz -S "20%" --discount_fallback -o ${ngram_num} - >${ngram_exp}/${ngram_num}gram_char.arpa
-            cat ${data_feats}/lm_train.txt | awk -F'['${joint_symbol}' ]' '{print $3}' | lmplz -S "20%" --discount_fallback -o ${ngram_num} - >${ngram_exp}/${ngram_num}gram_phone.arpa
+            cat ${data_feats}/lm_train.txt | awk -F'['${joint_symbol}' ]' '{for(i=3;i<NF;i++){print("%s%s",$1,OFS=" ")}print $NF}' | lmplz -S "20%" --discount_fallback -o ${ngram_num} - >${ngram_exp}/${ngram_num}gram_phone.arpa
             build_binary -s ${ngram_exp}/${ngram_num}gram_char.arpa ${ngram_exp}/${ngram_num}gram_char.bin
             build_binary -s ${ngram_exp}/${ngram_num}gram_phone.arpa ${ngram_exp}/${ngram_num}gram_phone.bin
         else
@@ -1412,22 +1425,21 @@ if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ] && ! [[ " ${skip_stages} " =~
         _opts+="--use_lang_prompt ${use_lang_prompt} "
         _opts+="--use_nlp_prompt ${use_nlp_prompt} "
     fi
-    if [ ${token_type} = aux_phone ]; then
-        _opts+="--train_data_path_and_name_and_type ${_asr_train_dir}/phoneme,phoneme,text "
-        _opts+="--valid_data_path_and_name_and_type ${_asr_valid_dir}/phoneme,phoneme,text "
-        token_list_out="${token_list[0]} ${token_list[1]}"
-    fi
 
     if [ ${token_type} = aux_phone ]; then
+        token_list_out="${token_list[0]},${token_list[1]}"
         # shellcheck disable=SC2046,SC2086
         ${train_cmd} JOB=1:"${_nj}" "${_logdir}"/stats.JOB.log \
-            ${python} -m espnet2.bin.${asr_task}_train \
+            ${python} -m espnet2.bin.${asr_task}_train_phone \
+                --model "${asr_model}" \
                 --collect_stats true \
                 --use_preprocessor true \
+                --preprocessor "asrp" \
                 --bpemodel "${bpemodel}" \
                 --token_type "${token_type}" \
                 --token_list "${token_list_out}" \
-                --non_linguistic_symbols "${nlsyms_txt}" \
+                --char_non_linguistic_symbols "${char_nlsyms_txt}" \
+                --phone_non_linguistic_symbols "${phone_nlsyms_txt}" \
                 --cleaner "${cleaner}" \
                 --g2p "${g2p}" \
                 --train_shape_file "${_logdir}/train.JOB.scp" \
@@ -1547,6 +1559,10 @@ if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ] && ! [[ " ${skip_stages} " =~
             _opts+="--train_shape_file ${_split_dir}/${ref_text_names[$i]}_shape.${token_type} "
         done
         _opts+="--multiple_iterator true "
+        if [ ${token_type} = aux_phone ]; then
+            _opts+="--train_data_path_and_name_and_type ${_split_dir}/phoneme,phoneme,text "
+            _opts+="--train_shape_file ${_split_dir}/phoneme_shape "
+        fi
 
     else
         _opts+="--train_data_path_and_name_and_type ${_asr_train_dir}/${_scp},speech,${_type} "
@@ -1592,30 +1608,61 @@ if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ] && ! [[ " ${skip_stages} " =~
         jobname="${asr_exp}/train.log"
     fi
 
-    # shellcheck disable=SC2086
-    ${python} -m espnet2.bin.launch \
-        --cmd "${cuda_cmd} --name ${jobname}" \
-        --log "${asr_exp}"/train.log \
-        --ngpu "${ngpu}" \
-        --num_nodes "${num_nodes}" \
-        --init_file_prefix "${asr_exp}"/.dist_init_ \
-        --multiprocessing_distributed true -- \
-        ${python} -m espnet2.bin.${asr_task}_train \
-            --use_preprocessor true \
-            --bpemodel "${bpemodel}" \
-            --token_type "${token_type}" \
-            --token_list "${token_list}" \
-            --non_linguistic_symbols "${nlsyms_txt}" \
-            --cleaner "${cleaner}" \
-            --g2p "${g2p}" \
-            --valid_data_path_and_name_and_type "${_asr_valid_dir}/${_scp},speech,${_type}" \
-            --valid_shape_file "${asr_stats_dir}/valid/speech_shape" \
-            --resume true \
-            ${pretrained_model:+--init_param $pretrained_model} \
-            --ignore_init_mismatch ${ignore_init_mismatch} \
-            --fold_length "${_fold_length}" \
-            --output_dir "${asr_exp}" \
-            ${_opts} ${asr_args}
+    if [ ${token_type} = aux_phone ]; then
+        token_list_out="${token_list[0]},${token_list[1]}"
+        # shellcheck disable=SC2086
+        ${python} -m espnet2.bin.launch \
+            --cmd "${cuda_cmd} --name ${jobname}" \
+            --log "${asr_exp}"/train.log \
+            --ngpu "${ngpu}" \
+            --num_nodes "${num_nodes}" \
+            --init_file_prefix "${asr_exp}"/.dist_init_ \
+            --multiprocessing_distributed true -- \
+            ${python} -m espnet2.bin.${asr_task}_train_phone \
+                --model ${asr_model} \
+                --use_preprocessor true \
+                --preprocessor "asrp" \
+                --bpemodel "${bpemodel}" \
+                --token_type "${token_type}" \
+                --token_list "${token_list_out}" \
+                --char_non_linguistic_symbols "${char_nlsyms_txt}" \
+                --phone_non_linguistic_symbols "${phone_nlsyms_txt}" \
+                --cleaner "${cleaner}" \
+                --g2p "${g2p}" \
+                --valid_data_path_and_name_and_type "${_asr_valid_dir}/${_scp},speech,${_type}" \
+                --valid_shape_file "${asr_stats_dir}/valid/speech_shape" \
+                --resume true \
+                ${pretrained_model:+--init_param $pretrained_model} \
+                --ignore_init_mismatch ${ignore_init_mismatch} \
+                --fold_length "${_fold_length}" \
+                --output_dir "${asr_exp}" \
+                ${_opts} ${asr_args}
+    else
+        # shellcheck disable=SC2086
+        ${python} -m espnet2.bin.launch \
+            --cmd "${cuda_cmd} --name ${jobname}" \
+            --log "${asr_exp}"/train.log \
+            --ngpu "${ngpu}" \
+            --num_nodes "${num_nodes}" \
+            --init_file_prefix "${asr_exp}"/.dist_init_ \
+            --multiprocessing_distributed true -- \
+            ${python} -m espnet2.bin.${asr_task}_train \
+                --use_preprocessor true \
+                --bpemodel "${bpemodel}" \
+                --token_type "${token_type}" \
+                --token_list "${token_list}" \
+                --non_linguistic_symbols "${nlsyms_txt}" \
+                --cleaner "${cleaner}" \
+                --g2p "${g2p}" \
+                --valid_data_path_and_name_and_type "${_asr_valid_dir}/${_scp},speech,${_type}" \
+                --valid_shape_file "${asr_stats_dir}/valid/speech_shape" \
+                --resume true \
+                ${pretrained_model:+--init_param $pretrained_model} \
+                --ignore_init_mismatch ${ignore_init_mismatch} \
+                --fold_length "${_fold_length}" \
+                --output_dir "${asr_exp}" \
+                ${_opts} ${asr_args}
+    fi
 
 fi
 
