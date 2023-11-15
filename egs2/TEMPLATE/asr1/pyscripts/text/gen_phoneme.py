@@ -2,11 +2,11 @@ import argparse
 from typing import Optional
 import pyopenjtalk  # type: ignore
 
-import MeCab  # type: ignore
+# import MeCab  # type: ignore
 
 
-tagger = MeCab.Tagger("-Oyomi")
-tagger.parse("")  # avoid bug
+# tagger = MeCab.Tagger("-Oyomi")
+# tagger.parse("")  # avoid bug
 
 
 def parse_args():

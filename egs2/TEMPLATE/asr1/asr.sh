@@ -605,7 +605,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ] && ! [[ " ${skip_stages} " =~ [
 
     if [ "${token_type}" = char_phone && ${pre_phonemize} ]; then
         ${python} -m pip install pyopenjtalk
-        ${python} -m pip install mecab-python3
+        # ${python} -m pip install mecab-python3
         all_dsite="${train_set} ${valid_set} ${test_sets}"
         for _dsite in ${all_dsite}; do
             trg_path="data/${_dsite}/text"
@@ -618,7 +618,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ] && ! [[ " ${skip_stages} " =~ [
             rm ${trg_path}".phoneme"
         done
     elif [ "${token_type}" = aux_phone ]; then
-        ${python} -m pip install mecab-python3
+        # ${python} -m pip install mecab-python3
         ${python} -m pip install pyopenjtalk
         all_dsite="${train_set} ${valid_set} ${test_sets}"
         error_path="data/errors"
