@@ -659,8 +659,6 @@ class ESPnetASRModelWithPhoneme(AbsESPnetModel):
 
         # Calc CER using CTC
         char_cer_ctc = None
-        print(self.error_calculator)
-        print(self.training)
         if not self.training and self.char_error_calculator is not None:
             ys_hat = self.char_ctc.argmax(encoder_out).data
             char_cer_ctc = self.char_error_calculator(
