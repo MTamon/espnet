@@ -122,7 +122,7 @@ k2_ctc_decoding=true
 use_nbest_rescoring=true # use transformer-decoder
                          # and transformer language model for nbest rescoring
 num_paths=1000 # The 3rd argument of k2.random_paths.
-nll_batch_size=100 # Affect GPU memory usage when computing nll
+nll_batch_size=75 # Affect GPU memory usage when computing nll
                    # during nbest rescoring
 k2_config=./conf/decode_asr_transformer_with_k2.yaml
 
@@ -1559,10 +1559,10 @@ if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ] && ! [[ " ${skip_stages} " =~
             _opts+="--train_shape_file ${_split_dir}/${ref_text_names[$i]}_shape.${token_type} "
         done
         _opts+="--multiple_iterator true "
-        if [ ${token_type} = aux_phone ]; then
-            _opts+="--train_data_path_and_name_and_type ${_split_dir}/phoneme,phoneme,text "
-            _opts+="--train_shape_file ${_split_dir}/phoneme_shape "
-        fi
+        # if [ ${token_type} = aux_phone ]; then
+        #     _opts+="--train_data_path_and_name_and_type ${_split_dir}/phoneme,phoneme,text "
+        #     _opts+="--train_shape_file ${_split_dir}/phoneme_shape "
+        # fi
 
     else
         _opts+="--train_data_path_and_name_and_type ${_asr_train_dir}/${_scp},speech,${_type} "

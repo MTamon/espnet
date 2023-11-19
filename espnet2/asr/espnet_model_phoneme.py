@@ -56,8 +56,7 @@ class ESPnetASRModelWithPhoneme(AbsESPnetModel):
         aux_ctc: dict = None,
         phone_ctc_weight: float = 0.5,
         char_ctc_weight: float = 0.5,
-        phone_interctc_weight: float = 0.0,
-        char_interctc_weight: float = 0.0,
+        interctc_weight: float = 0.0,
         ignore_id: int = -1,
         lsm_weight: float = 0.0,
         length_normalized_loss: bool = False,
@@ -77,9 +76,6 @@ class ESPnetASRModelWithPhoneme(AbsESPnetModel):
         assert check_argument_types()
         assert 0.0 <= phone_ctc_weight + char_ctc_weight <= 1.0, (
             phone_ctc_weight + char_ctc_weight
-        )
-        assert 0.0 <= phone_interctc_weight + char_ctc_weight < 1.0, (
-            phone_interctc_weight + char_ctc_weight
         )
 
         super().__init__()
@@ -119,9 +115,7 @@ class ESPnetASRModelWithPhoneme(AbsESPnetModel):
 
         self.phone_ctc_weight = phone_ctc_weight
         self.char_ctc_weight = char_ctc_weight
-
-        self.char_interctc_weight = char_interctc_weight
-        self.phone_interctc_weight = phone_interctc_weight
+        self.interctc_weight = interctc_weight
 
         self.aux_ctc = aux_ctc
         self.phone_token_list = phone_token_list.copy()
@@ -137,16 +131,14 @@ class ESPnetASRModelWithPhoneme(AbsESPnetModel):
         if not hasattr(self.encoder, "interctc_use_conditioning"):
             self.encoder.interctc_use_conditioning = False
         if self.encoder.interctc_use_conditioning:
-            self.encoder.char_conditioning_layer = torch.nn.Linear(
+            self.encoder.conditioning_layer = torch.nn.Linear(
                 char_vocab_size, self.encoder.output_size()
-            )
-            self.encoder.phone_conditioning_layer = torch.nn.Linear(
-                phone_vocab_size, self.encoder.output_size()
             )
 
         self.use_transducer_decoder = joint_network is not None
 
-        self.error_calculator = None
+        self.char_error_calculator = None
+        self.phone_error_calculator = None
 
         if self.use_transducer_decoder:
             self.decoder = decoder
@@ -187,8 +179,11 @@ class ESPnetASRModelWithPhoneme(AbsESPnetModel):
                 self.error_calculator_trans = None
 
                 if self.char_ctc_weight != 0:
-                    self.error_calculator = ErrorCalculator(
+                    self.char_error_calculator = ErrorCalculator(
                         char_token_list, sym_space, sym_blank, report_cer, report_wer
+                    )
+                    self.phone_error_calculator = ErrorCalculator(
+                        phone_token_list, sym_space, sym_blank, report_cer, report_wer
                     )
         else:
             # we set self.decoder = None in the CTC mode since
@@ -291,13 +286,17 @@ class ESPnetASRModelWithPhoneme(AbsESPnetModel):
         loss_transducer, cer_transducer, wer_transducer = None, None, None
         stats = dict()
 
+        loss_ctc = None
+
         # 1. CTC branch
         if self.char_ctc_weight != 0.0:
             char_loss_ctc, char_cer_ctc = self._calc_char_ctc_loss(
                 encoder_out, encoder_out_lens, text, text_lengths
             )
+        if self.phone_ctc_weight != 0.0:
+            encoder_out_phone = intermediate_outs[0][1]
             phone_loss_ctc, phone_cer_ctc = self._calc_phone_ctc_loss(
-                encoder_out, encoder_out_lens, phoneme, phoneme_lengths
+                encoder_out_phone, encoder_out_lens, phoneme, phoneme_lengths
             )
 
             # Collect CTC branch stats
@@ -311,16 +310,18 @@ class ESPnetASRModelWithPhoneme(AbsESPnetModel):
             stats["phone_cer_ctc"] = phone_cer_ctc
 
         # Intermediate CTC (optional)
-        char_loss_interctc = 0.0
-        phone_loss_interctc = 0.0
-        if self.char_interctc_weight != 0.0 and intermediate_outs is not None:
-            for layer_idx, intermediate_out in intermediate_outs:
+        loss_interctc = 0.0
+        if (
+            self.interctc_weight != 0.0
+            and intermediate_outs is not None
+            and len(intermediate_outs) > 1
+        ):
+            for layer_idx, intermediate_out in intermediate_outs[1:]:
                 # we assume intermediate_out has the same length & padding
                 # as those of encoder_out
 
                 # use auxillary ctc data if specified
-                char_loss_ic = None
-                phone_loss_ic = None
+                loss_ic = None
                 if self.aux_ctc is not None:
                     idx_key = str(layer_idx)
                     if idx_key in self.aux_ctc:
@@ -329,7 +330,7 @@ class ESPnetASRModelWithPhoneme(AbsESPnetModel):
                         aux_data_lengths = kwargs.get(aux_data_key + "_lengths", None)
 
                         if aux_data_tensor is not None and aux_data_lengths is not None:
-                            char_loss_ic, char_cer_ic = self._calc_char_ctc_loss(
+                            loss_ic, cer_ic = self._calc_char_ctc_loss(
                                 intermediate_out,
                                 encoder_out_lens,
                                 aux_data_tensor,
@@ -339,47 +340,29 @@ class ESPnetASRModelWithPhoneme(AbsESPnetModel):
                             raise Exception(
                                 "Aux. CTC tasks were specified but no data was found"
                             )
-                if char_loss_ic is None:
-                    char_loss_ic, char_cer_ic = self._calc_char_ctc_loss(
+                if loss_ic is None:
+                    loss_ic, cer_ic = self._calc_char_ctc_loss(
                         intermediate_out, encoder_out_lens, text, text_lengths
                     )
-                if phone_loss_ic is None:
-                    phone_loss_ic, phone_cer_ic = self._calc_phone_ctc_loss(
-                        intermediate_out,
-                        encoder_out_lens,
-                        phoneme,
-                        phoneme_lengths,
-                    )
-                char_loss_interctc = char_loss_interctc + char_loss_ic
-                phone_loss_interctc = phone_loss_interctc + phone_loss_ic
+                loss_interctc = loss_interctc + loss_ic
 
                 # Collect Intermedaite CTC stats
-                stats["char_loss_interctc_layer{}".format(layer_idx)] = (
-                    char_loss_ic.detach() if char_loss_ic is not None else None
+                stats["loss_interctc_layer{}".format(layer_idx)] = (
+                    loss_ic.detach() if loss_ic is not None else None
                 )
-                stats["char_cer_interctc_layer{}".format(layer_idx)] = char_cer_ic
+                stats["cer_interctc_layer{}".format(layer_idx)] = cer_ic
 
-                stats["phone_loss_interctc_layer{}".format(layer_idx)] = (
-                    phone_loss_ic.detach() if phone_loss_ic is not None else None
-                )
-                stats["phone_cer_interctc_layer{}".format(layer_idx)] = phone_cer_ic
-
-            char_loss_interctc = char_loss_interctc / len(intermediate_outs)
-            phone_loss_interctc = phone_loss_interctc / len(intermediate_outs)
+            loss_interctc = loss_interctc / len(intermediate_outs)
 
             # calculate whole encoder loss
             char_loss_ctc = (
-                1 - self.char_interctc_weight
-            ) * char_loss_ctc + self.char_interctc_weight * char_loss_interctc
+                1 - self.interctc_weight
+            ) * char_loss_ctc + self.interctc_weight * loss_interctc
 
-            phone_loss_ctc = (
-                1 - self.phone_interctc_weight
-            ) * phone_loss_ctc + self.phone_interctc_weight * phone_loss_interctc
-
-            loss_ctc = (
-                self.char_ctc_weight * char_loss_ctc
-                + self.phone_ctc_weight * phone_loss_ctc
-            )
+        loss_ctc = (
+            phone_loss_ctc * self.phone_ctc_weight
+            + char_loss_ctc * self.char_ctc_weight
+        )
 
         if self.use_transducer_decoder:
             # 2a. Transducer decoder branch
@@ -676,9 +659,11 @@ class ESPnetASRModelWithPhoneme(AbsESPnetModel):
 
         # Calc CER using CTC
         char_cer_ctc = None
-        if not self.training and self.error_calculator is not None:
+        print(self.error_calculator)
+        print(self.training)
+        if not self.training and self.char_error_calculator is not None:
             ys_hat = self.char_ctc.argmax(encoder_out).data
-            char_cer_ctc = self.error_calculator(
+            char_cer_ctc = self.char_error_calculator(
                 ys_hat.cpu(), ys_pad.cpu(), is_ctc=True
             )
         return char_loss_ctc, char_cer_ctc
@@ -697,9 +682,9 @@ class ESPnetASRModelWithPhoneme(AbsESPnetModel):
 
         # Calc CER using CTC
         phone_cer_ctc = None
-        if not self.training and self.error_calculator is not None:
+        if not self.training and self.phone_error_calculator is not None:
             ys_hat = self.phone_ctc.argmax(encoder_out).data
-            phone_cer_ctc = self.error_calculator(
+            phone_cer_ctc = self.phone_error_calculator(
                 ys_hat.cpu(), ys_pad.cpu(), is_ctc=True
             )
         return phone_loss_ctc, phone_cer_ctc

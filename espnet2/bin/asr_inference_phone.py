@@ -117,7 +117,7 @@ class Speech2Text:
     ):
         assert check_argument_types()
 
-        task = ASRTask if not enh_s2t_task else EnhS2TTask
+        task = ASRPhonemeTask if not enh_s2t_task else EnhS2TTask
 
         if quantize_asr_model or quantize_lm:
             if quantize_dtype == "float16" and torch.__version__ < LooseVersion(

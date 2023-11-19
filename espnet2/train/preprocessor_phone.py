@@ -441,20 +441,20 @@ class ASRPPreprocessor(AbsPreprocessor):
             data[self.phoneme_name] = np.array(text_ints, dtype=np.int64)
             if "prompt" in data:
                 raise NotImplementedError("prompt is not supported ASRPreprocessor")
-        if self.aux_task_names is not None and self.tokenizer is not None:
-            for name in self.aux_task_names:
-                if name == "phoneme":
-                    text = data[name]
-                    text = self.text_cleaner(text)
-                    tokens = self.tokenizer.phone_text2tokens(text)
-                    text_ints = self.phone_token_id_converter.tokens2ids(tokens)
-                    data[name] = np.array(text_ints, dtype=np.int64)
-                if name in data:
-                    text = data[name]
-                    text = self.text_cleaner(text)
-                    tokens = self.tokenizer.text2tokens(text)
-                    text_ints = self.char_token_id_converter.tokens2ids(tokens)
-                    data[name] = np.array(text_ints, dtype=np.int64)
+        # if self.aux_task_names is not None and self.tokenizer is not None:
+        #     for name in self.aux_task_names:
+        #         if name == "phoneme":
+        #             text = data[name]
+        #             text = self.text_cleaner(text)
+        #             tokens = self.tokenizer.phone_text2tokens(text)
+        #             text_ints = self.phone_token_id_converter.tokens2ids(tokens)
+        #             data[name] = np.array(text_ints, dtype=np.int64)
+        #         if name in data:
+        #             text = data[name]
+        #             text = self.text_cleaner(text)
+        #             tokens = self.tokenizer.text2tokens(text)
+        #             text_ints = self.char_token_id_converter.tokens2ids(tokens)
+        #             data[name] = np.array(text_ints, dtype=np.int64)
         assert check_return_type(data)
         return data
 
