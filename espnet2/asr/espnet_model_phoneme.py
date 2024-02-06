@@ -295,6 +295,7 @@ class ESPnetASRModelWithPhoneme(AbsESPnetModel):
             )
         if self.phone_ctc_weight != 0.0:
             encoder_out_phone = intermediate_outs[0][1]
+            intermediate_outs = intermediate_outs[1:]
             phone_loss_ctc, phone_cer_ctc = self._calc_phone_ctc_loss(
                 encoder_out_phone, encoder_out_lens, phoneme, phoneme_lengths
             )

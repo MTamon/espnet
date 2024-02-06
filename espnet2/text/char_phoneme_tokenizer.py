@@ -46,7 +46,6 @@ class CharPhonemeTokenizer(AbsTokenizer):
         return (
             f"{self.__class__.__name__}("
             f'space_symbol="{self.space_symbol}"'
-            f'g2p_type="{self.g2p_type}"'
             f'char_non_linguistic_symbols="{self.char_non_linguistic_symbols}"'
             f'phone_non_linguistic_symbols="{self.phone_non_linguistic_symbols}"'
             f'nonsplit_symbols="{self.nonsplit_symbols}"'

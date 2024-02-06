@@ -33,4 +33,5 @@ speed_perturb_factors="0.9 1.0 1.1"
     --lm_train_text "data/train_nodev/text" "$@" \
     --use_lm false \
     --use_ngram false \
+    --inference_asr_model "valid.acc.best.pth" \
     

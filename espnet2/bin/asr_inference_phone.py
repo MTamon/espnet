@@ -47,9 +47,12 @@ from espnet.nets.scorers.ctc import CTCPrefixScorer
 from espnet.nets.scorers.length_bonus import LengthBonus
 from espnet.utils.cli_utils import get_commandline_args
 
+from espnet2.asr.espnet_model_phoneme import ESPnetASRModelWithPhoneme
+from espnet2.text.char_phoneme_tokenizer import CharPhonemeTokenizer
+
 try:
-    from transformers import AutoModelForCausalLM, AutoModelForSeq2SeqLM
-    from transformers.file_utils import ModelOutput
+    from transformers import AutoModelForCausalLM, AutoModelForSeq2SeqLM  # type: ignore
+    from transformers.file_utils import ModelOutput  # type: ignore
 
     is_transformers_available = True
 except ImportError:
@@ -95,7 +98,8 @@ class Speech2Text:
         batch_size: int = 1,
         dtype: str = "float32",
         beam_size: int = 20,
-        ctc_weight: float = 0.5,
+        char_ctc_weight: float = 0.5,
+        phone_ctc_weight: float = 0.5,
         lm_weight: float = 1.0,
         ngram_weight: float = 0.9,
         penalty: float = 0.0,
@@ -137,6 +141,8 @@ class Speech2Text:
             asr_train_config, asr_model_file, device
         )
 
+        asr_model: ESPnetASRModelWithPhoneme = asr_model
+
         if enh_s2t_task:
             asr_model.inherite_attributes(
                 inherite_s2t_attrs=[
@@ -160,13 +166,21 @@ class Speech2Text:
 
         decoder = asr_model.decoder
 
-        ctc = CTCPrefixScorer(ctc=asr_model.ctc, eos=asr_model.eos)
-        token_list = asr_model.token_list
+        # char CTC
+        char_ctc = CTCPrefixScorer(ctc=asr_model.char_ctc, eos=asr_model.char_eos)
+        token_list = asr_model.char_token_list
         scorers.update(
             decoder=decoder,
-            ctc=ctc,
+            ctc=char_ctc,
             length_bonus=LengthBonus(len(token_list)),
         )
+        # phone CTC
+        # phone_ctc = CTCPrefixScorer(ctc=asr_model.phone_ctc, eos=asr_model.phone_eos)
+        # phone_token_list = asr_model.phone_token_list
+        # scorers.update(
+        #     phone_ctc=phone_ctc,
+        #     length_bonus=LengthBonus(len(phone_token_list)),
+        # )
 
         # 2. Build Language model
         if lm_train_config is not None:
@@ -205,7 +219,7 @@ class Speech2Text:
                 asr_model, "transducer_multi_blank_durations", []
             )[::-1] + [1]
             multi_blank_indices = [
-                asr_model.blank_id - i + 1
+                asr_model.char_blank_id - i + 1
                 for i in range(len(multi_blank_durations), 0, -1)
             ]
 
@@ -294,9 +308,11 @@ class Speech2Text:
             hugging_face_model = None
             hugging_face_linear_in = None
 
+            decoder_weight = 1.0 - char_ctc_weight - phone_ctc_weight
+
             weights = dict(
-                decoder=1.0 - ctc_weight,
-                ctc=ctc_weight,
+                decoder=decoder_weight / (1.0 - phone_ctc_weight),
+                ctc=char_ctc_weight / (1.0 - phone_ctc_weight),
                 lm=lm_weight,
                 ngram=ngram_weight,
                 length_bonus=penalty,
@@ -313,12 +329,12 @@ class Speech2Text:
                     )
                 logging.info("BeamSearchTimeSync implementation is selected.")
 
-                scorers["ctc"] = asr_model.ctc
+                scorers["ctc"] = asr_model.char_ctc
                 beam_search = BeamSearchTimeSync(
                     beam_size=beam_size,
                     weights=weights,
                     scorers=scorers,
-                    sos=asr_model.sos,
+                    sos=asr_model.char_sos,
                     token_list=token_list,
                 )
             else:
@@ -326,11 +342,11 @@ class Speech2Text:
                     beam_size=beam_size,
                     weights=weights,
                     scorers=scorers,
-                    sos=asr_model.sos,
-                    eos=asr_model.eos,
+                    sos=asr_model.char_sos,
+                    eos=asr_model.char_eos,
                     vocab_size=len(token_list),
                     token_list=token_list,
-                    pre_beam_score_key=None if ctc_weight == 1.0 else "full",
+                    pre_beam_score_key=None if char_ctc_weight == 1.0 else "full",
                 )
 
                 # TODO(karita): make all scorers batchfied
@@ -371,83 +387,88 @@ class Speech2Text:
 
         # compatibility for whisper tokenizer
         preprocessor_conf = getattr(asr_train_args, "preprocessor_conf", {})
-        whisper_language = preprocessor_conf.get("whisper_language", None)
-        whisper_task = preprocessor_conf.get("whisper_task", None)
+        # whisper_language = preprocessor_conf.get("whisper_language", None)
+        # whisper_task = preprocessor_conf.get("whisper_task", None)
 
-        if token_type is None:
-            tokenizer = None
-        elif token_type == "bpe" or token_type == "hugging_face":
-            if bpemodel is not None:
-                tokenizer = build_tokenizer(
-                    token_type=token_type,
-                    bpemodel=bpemodel,
-                )
-            else:
-                tokenizer = None
-        elif "whisper" in token_type:
-            tokenizer_language = asr_train_args.preprocessor_conf.get(
-                "tokenizer_language", "en"
-            )
-            tokenizer = build_tokenizer(
-                token_type=token_type,
-                bpemodel=bpemodel,
-                whisper_language=whisper_language,
-                whisper_task=whisper_task,
-                non_linguistic_symbols=prompt_token_file,
-            )
-        else:
-            tokenizer = build_tokenizer(token_type=token_type)
+        # if token_type is None:
+        #     tokenizer = None
+        # elif token_type == "bpe" or token_type == "hugging_face":
+        #     if bpemodel is not None:
+        #         tokenizer = build_tokenizer(
+        #             token_type=token_type,
+        #             bpemodel=bpemodel,
+        #         )
+        #     else:
+        #         tokenizer = None
+        # elif "whisper" in token_type:
+        #     tokenizer_language = asr_train_args.preprocessor_conf.get(
+        #         "tokenizer_language", "en"
+        #     )
+        #     tokenizer = build_tokenizer(
+        #         token_type=token_type,
+        #         bpemodel=bpemodel,
+        #         whisper_language=whisper_language,
+        #         whisper_task=whisper_task,
+        #         non_linguistic_symbols=prompt_token_file,
+        #     )
+        # else:
+        #     tokenizer = build_tokenizer(token_type=token_type)
+        tokenizer = build_tokenizer(token_type=token_type)
 
-        if token_type == "hugging_face":
-            converter = HuggingFaceTokenIDConverter(model_name_or_path=bpemodel)
-        elif bpemodel not in ["whisper_en", "whisper_multilingual"]:
-            converter = TokenIDConverter(token_list=token_list)
-        else:
-            if "speaker_change_symbol" in preprocessor_conf:
-                sot_asr = True
-            else:
-                sot_asr = False
-            converter = OpenAIWhisperTokenIDConverter(
-                model_type=bpemodel,
-                added_tokens_txt=prompt_token_file,
-                language=whisper_language or "en",
-                task=whisper_task or "transcribe",
-                sot=sot_asr,
-            )
-            beam_search.set_hyp_primer(
-                list(converter.tokenizer.sot_sequence_including_notimestamps)
-            )
-            if lang_prompt_token is not None:
-                a1 = converter.tokenizer.tokenizer.convert_ids_to_tokens(
-                    converter.tokenizer.sot_sequence_including_notimestamps
-                )
-                a1 = a1[:1] + lang_prompt_token.split() + a1[3:]
-                beam_search.set_hyp_primer(
-                    list(converter.tokenizer.tokenizer.convert_tokens_to_ids(a1))
-                )
-            elif nlp_prompt_token is not None:
-                a1 = converter.tokenizer.tokenizer.convert_ids_to_tokens(
-                    converter.tokenizer.sot_sequence_including_notimestamps
-                )
-                prompt_tokens = tokenizer.text2tokens(nlp_prompt_token)
-                a1 = a1[:2] + prompt_tokens + a1[3:]
-                beam_search.set_hyp_primer(
-                    list(converter.tokenizer.tokenizer.convert_tokens_to_ids(a1))
-                )
-            elif lid_prompt:
-                a1 = converter.tokenizer.tokenizer.convert_ids_to_tokens(
-                    converter.tokenizer.sot_sequence_including_notimestamps
-                )
-                a1 = a1[:1]
-                beam_search.set_hyp_primer(
-                    list(converter.tokenizer.tokenizer.convert_tokens_to_ids(a1))
-                )
+        converter = TokenIDConverter(token_list=token_list)
+        phone_converter = TokenIDConverter(token_list=asr_model.phone_token_list)
+        # if token_type == "hugging_face":
+        #     converter = HuggingFaceTokenIDConverter(model_name_or_path=bpemodel)
+        # elif bpemodel not in ["whisper_en", "whisper_multilingual"]:
+        #     converter = TokenIDConverter(token_list=token_list)
+        #     phone_converter = TokenIDConverter(token_list=asr_model.phone_token_list)
+        # else:
+        #     if "speaker_change_symbol" in preprocessor_conf:
+        #         sot_asr = True
+        #     else:
+        #         sot_asr = False
+        #     converter = OpenAIWhisperTokenIDConverter(
+        #         model_type=bpemodel,
+        #         added_tokens_txt=prompt_token_file,
+        #         language=whisper_language or "en",
+        #         task=whisper_task or "transcribe",
+        #         sot=sot_asr,
+        #     )
+        #     beam_search.set_hyp_primer(
+        #         list(converter.tokenizer.sot_sequence_including_notimestamps)
+        #     )
+        #     if lang_prompt_token is not None:
+        #         a1 = converter.tokenizer.tokenizer.convert_ids_to_tokens(
+        #             converter.tokenizer.sot_sequence_including_notimestamps
+        #         )
+        #         a1 = a1[:1] + lang_prompt_token.split() + a1[3:]
+        #         beam_search.set_hyp_primer(
+        #             list(converter.tokenizer.tokenizer.convert_tokens_to_ids(a1))
+        #         )
+        #     elif nlp_prompt_token is not None:
+        #         a1 = converter.tokenizer.tokenizer.convert_ids_to_tokens(
+        #             converter.tokenizer.sot_sequence_including_notimestamps
+        #         )
+        #         prompt_tokens = tokenizer.text2tokens(nlp_prompt_token)
+        #         a1 = a1[:2] + prompt_tokens + a1[3:]
+        #         beam_search.set_hyp_primer(
+        #             list(converter.tokenizer.tokenizer.convert_tokens_to_ids(a1))
+        #         )
+        #     elif lid_prompt:
+        #         a1 = converter.tokenizer.tokenizer.convert_ids_to_tokens(
+        #             converter.tokenizer.sot_sequence_including_notimestamps
+        #         )
+        #         a1 = a1[:1]
+        #         beam_search.set_hyp_primer(
+        #             list(converter.tokenizer.tokenizer.convert_tokens_to_ids(a1))
+        #         )
         logging.info(f"Text tokenizer: {tokenizer}")
 
         self.asr_model = asr_model
         self.asr_train_args = asr_train_args
         self.converter = converter
-        self.tokenizer = tokenizer
+        self.phone_converter = phone_converter
+        self.tokenizer: CharPhonemeTokenizer = tokenizer
         self.beam_search = beam_search
         self.beam_search_transducer = beam_search_transducer
         self.hugging_face_model = hugging_face_model
@@ -497,58 +518,83 @@ class Speech2Text:
 
         # b. Forward Encoder
         enc, enc_olens = self.asr_model.encode(**batch)
-        if self.multi_asr:
-            enc = enc.unbind(dim=1)  # (batch, num_inf, ...) -> num_inf x [batch, ...]
-        if self.enh_s2t_task or self.multi_asr:
-            # Enh+ASR joint task or Multispkr ASR task
-            # NOTE (Wangyou): the return type in this case is List[default_return_type]
-            if self.multi_asr:
-                num_spk = getattr(self.asr_model, "num_inf", 1)
-            else:
-                num_spk = getattr(self.asr_model.enh_model, "num_spk", 1)
-            assert len(enc) == num_spk, (len(enc), num_spk)
-            results = []
-            for spk, enc_spk in enumerate(enc, 1):
-                logging.info(f"=== [{str(self.asr_model.__class__)}] Speaker {spk} ===")
-                if isinstance(enc_spk, tuple):
-                    enc_spk = enc_spk[0]
-                assert len(enc_spk) == 1, len(enc_spk)
+        # if self.multi_asr:
+        #     enc = enc.unbind(dim=1)  # (batch, num_inf, ...) -> num_inf x [batch, ...]
+        # if self.enh_s2t_task or self.multi_asr:
+        #     # Enh+ASR joint task or Multispkr ASR task
+        #     # NOTE (Wangyou): the return type in this case is List[default_return_type]
+        #     if self.multi_asr:
+        #         num_spk = getattr(self.asr_model, "num_inf", 1)
+        #     else:
+        #         num_spk = getattr(self.asr_model.enh_model, "num_spk", 1)
+        #     assert len(enc) == num_spk, (len(enc), num_spk)
+        #     results = []
+        #     for spk, enc_spk in enumerate(enc, 1):
+        #         logging.info(f"=== [{str(self.asr_model.__class__)}] Speaker {spk} ===")
+        #         if isinstance(enc_spk, tuple):
+        #             enc_spk = enc_spk[0]
+        #         assert len(enc_spk) == 1, len(enc_spk)
 
-                # c. Passed the encoder result and the beam search
-                ret = self._decode_single_sample(enc_spk[0])
-                assert check_return_type(ret)
-                results.append(ret)
+        #         # c. Passed the encoder result and the beam search
+        #         ret = self._decode_single_sample(enc_spk[0])
+        #         assert check_return_type(ret)
+        #         results.append(ret)
 
-        else:
-            # Normal ASR
-            intermediate_outs = None
-            if isinstance(enc, tuple):
-                intermediate_outs = enc[1]
-                enc = enc[0]
-            assert len(enc) == 1, len(enc)
+        # else:
+        #     # Normal ASR
+        #     intermediate_outs = None
+        #     if isinstance(enc, tuple):
+        #         intermediate_outs = enc[1]
+        #         enc_phone = intermediate_outs[0][1]
+        #         intermediate_outs = (
+        #             intermediate_outs[1:] if intermediate_outs[1:] else None
+        #         )
+        #         enc = enc[0]
+        #     assert len(enc) == 1, len(enc)
 
-            # c. Passed the encoder result and the beam search
-            results = self._decode_single_sample(enc[0])
+        #     # c. Passed the encoder result and the beam search
+        #     results, results_phone = self._decode_single_sample(enc[0], enc_phone)
 
-            # Encoder intermediate CTC predictions
-            if intermediate_outs is not None:
-                encoder_interctc_res = self._decode_interctc(intermediate_outs)
-                results = (results, encoder_interctc_res)
-            assert check_return_type(results)
+        #     # Encoder intermediate CTC predictions
+        #     if intermediate_outs is not None:
+        #         encoder_interctc_res = self._decode_interctc(intermediate_outs)
+        #         results = (results, encoder_interctc_res)
+        #     assert check_return_type(results)
+        # Normal ASR
+        intermediate_outs = None
+        if isinstance(enc, tuple):
+            intermediate_outs = enc[1]
+            enc_phone = intermediate_outs[0][1]
+            intermediate_outs = intermediate_outs[1:] if intermediate_outs[1:] else None
+            enc = enc[0]
+        assert len(enc) == 1, len(enc)
 
-        return results
+        # c. Passed the encoder result and the beam search
+        results, results_phone = self._decode_single_sample(enc[0], enc_phone)
+
+        # Encoder intermediate CTC predictions
+        if intermediate_outs is not None:
+            encoder_interctc_res = self._decode_interctc(intermediate_outs)
+            results = (results, encoder_interctc_res)
+        assert check_return_type(results)
+
+        return results, results_phone
 
     def _decode_interctc(
         self, intermediate_outs: List[Tuple[int, torch.Tensor]]
     ) -> Dict[int, List[str]]:
         assert check_argument_types()
 
-        exclude_ids = [self.asr_model.blank_id, self.asr_model.sos, self.asr_model.eos]
+        exclude_ids = [
+            self.asr_model.char_blank_id,
+            self.asr_model.char_sos,
+            self.asr_model.char_eos,
+        ]
         res = {}
         token_list = self.beam_search.token_list
 
         for layer_idx, encoder_out in intermediate_outs:
-            y = self.asr_model.ctc.argmax(encoder_out)[0]  # batch_size = 1
+            y = self.asr_model.char_ctc.argmax(encoder_out)[0]  # batch_size = 1
             y = [x[0] for x in groupby(y) if x[0] not in exclude_ids]
             y = [token_list[x] for x in y]
 
@@ -556,7 +602,23 @@ class Speech2Text:
 
         return res
 
-    def _decode_single_sample(self, enc: torch.Tensor):
+    def _decode_phoneme(self, enc_phone: torch.Tensor) -> List[str]:
+        assert check_argument_types()
+
+        exclude_ids = [
+            self.asr_model.phone_blank_id,
+            self.asr_model.phone_sos,
+            self.asr_model.phone_eos,
+        ]
+        token_list = self.asr_model.phone_token_list
+
+        y = self.asr_model.phone_ctc.argmax(enc_phone)[0]  # batch_size = 1
+        y = [x[0] for x in groupby(y) if x[0] not in exclude_ids]
+        y: List[str] = [token_list[x] for x in y]
+
+        return y
+
+    def _decode_single_sample(self, enc: torch.Tensor, enc_phone: torch.Tensor):
         if self.beam_search_transducer:
             logging.info("encoder output length: " + str(enc.shape[0]))
             nbest_hyps = self.beam_search_transducer(enc)
@@ -645,12 +707,14 @@ class Speech2Text:
             token = self.converter.ids2tokens(token_int)
 
             if self.tokenizer is not None:
-                text = self.tokenizer.tokens2text(token)
+                text = self.tokenizer.char_tokens2text(token)
             else:
                 text = None
             results.append((text, token, token_int, hyp))
 
-        return results
+        results_phone = self._decode_phoneme(enc_phone)
+
+        return results, results_phone
 
     @staticmethod
     def from_pretrained(
@@ -692,7 +756,8 @@ def inference(
     beam_size: int,
     ngpu: int,
     seed: int,
-    ctc_weight: float,
+    char_ctc_weight: float,
+    phone_ctc_weight: float,
     lm_weight: float,
     ngram_weight: float,
     penalty: float,
@@ -763,7 +828,8 @@ def inference(
         minlenratio=minlenratio,
         dtype=dtype,
         beam_size=beam_size,
-        ctc_weight=ctc_weight,
+        char_ctc_weight=char_ctc_weight,
+        phone_ctc_weight=phone_ctc_weight,
         lm_weight=lm_weight,
         ngram_weight=ngram_weight,
         penalty=penalty,
@@ -814,64 +880,93 @@ def inference(
 
             # N-best list of (text, token, token_int, hyp_object)
             try:
-                results = speech2text(**batch)
+                results, phone_results = speech2text(**batch)
             except TooShortUttError as e:
                 logging.warning(f"Utterance {keys} {e}")
                 hyp = Hypothesis(score=0.0, scores={}, states={}, yseq=[])
                 results = [[" ", ["<space>"], [2], hyp]] * nbest
-                if enh_s2t_task:
-                    num_spk = getattr(speech2text.asr_model.enh_model, "num_spk", 1)
-                    results = [results for _ in range(num_spk)]
+                phone_results = [" ", ["<space>"], [2], hyp]
+                # if enh_s2t_task:
+                #     num_spk = getattr(speech2text.asr_model.enh_model, "num_spk", 1)
+                #     results = [results for _ in range(num_spk)]
+                #     phone_results = [phone_results for _ in range(num_spk)]
+            phone_results: List[str]
 
             # Only supporting batch_size==1
             key = keys[0]
-            if enh_s2t_task or multi_asr:
-                # Enh+ASR joint task
-                for spk, ret in enumerate(results, 1):
-                    for n, (text, token, token_int, hyp) in zip(
-                        range(1, nbest + 1), ret
-                    ):
-                        # Create a directory: outdir/{n}best_recog_spk?
-                        ibest_writer = writer[f"{n}best_recog"]
+            # if enh_s2t_task or multi_asr:
+            #     # Enh+ASR joint task
+            #     for spk, ret in enumerate(results, 1):
+            #         for n, (text, token, token_int, hyp) in zip(
+            #             range(1, nbest + 1), ret
+            #         ):
+            #             # Create a directory: outdir/{n}best_recog_spk?
+            #             ibest_writer = writer[f"{n}best_recog"]
 
-                        # Write the result to each file
-                        ibest_writer[f"token_spk{spk}"][key] = " ".join(token)
-                        ibest_writer[f"token_int_spk{spk}"][key] = " ".join(
-                            map(str, token_int)
-                        )
-                        ibest_writer[f"score_spk{spk}"][key] = str(hyp.score)
+            #             # Write the result to each file
+            #             ibest_writer[f"token_spk{spk}"][key] = " ".join(token)
+            #             ibest_writer[f"token_int_spk{spk}"][key] = " ".join(
+            #                 map(str, token_int)
+            #             )
+            #             ibest_writer[f"score_spk{spk}"][key] = str(hyp.score)
 
-                        if text is not None:
-                            ibest_writer[f"text_spk{spk}"][key] = text
+            #             if text is not None:
+            #                 ibest_writer[f"text_spk{spk}"][key] = text
 
-            else:
-                # Normal ASR
-                encoder_interctc_res = None
-                if isinstance(results, tuple):
-                    results, encoder_interctc_res = results
+            # else:
+            # # Normal ASR
+            # encoder_interctc_res = None
+            # if isinstance(results, tuple):
+            #     results, encoder_interctc_res = results
 
-                for n, (text, token, token_int, hyp) in zip(
-                    range(1, nbest + 1), results
-                ):
-                    # Create a directory: outdir/{n}best_recog
-                    ibest_writer = writer[f"{n}best_recog"]
+            # for n, (text, token, token_int, hyp) in zip(
+            #     range(1, nbest + 1), results
+            # ):
+            #     # Create a directory: outdir/{n}best_recog
+            #     ibest_writer = writer[f"{n}best_recog"]
 
-                    # Write the result to each file
-                    ibest_writer["token"][key] = " ".join(token)
-                    ibest_writer["token_int"][key] = " ".join(map(str, token_int))
-                    ibest_writer["score"][key] = str(hyp.score)
+            #     # Write the result to each file
+            #     ibest_writer["token"][key] = " ".join(token)
+            #     ibest_writer["token_int"][key] = " ".join(map(str, token_int))
+            #     ibest_writer["score"][key] = str(hyp.score)
 
-                    if text is not None:
-                        ibest_writer["text"][key] = text
+            #     if text is not None:
+            #         ibest_writer["text"][key] = text
 
-                # Write intermediate predictions to
-                # encoder_interctc_layer<layer_idx>.txt
-                ibest_writer = writer[f"1best_recog"]
-                if encoder_interctc_res is not None:
-                    for idx, text in encoder_interctc_res.items():
-                        ibest_writer[f"encoder_interctc_layer{idx}.txt"][
-                            key
-                        ] = " ".join(text)
+            # # Write intermediate predictions to
+            # # encoder_interctc_layer<layer_idx>.txt
+            # ibest_writer = writer[f"1best_recog"]
+            # if encoder_interctc_res is not None:
+            #     for idx, text in encoder_interctc_res.items():
+            #         ibest_writer[f"encoder_interctc_layer{idx}.txt"][
+            #             key
+            #         ] = " ".join(text)
+            # Normal ASR
+            encoder_interctc_res = None
+            if isinstance(results, tuple):
+                results, encoder_interctc_res = results
+
+            for n, (text, token, token_int, hyp) in zip(range(1, nbest + 1), results):
+                # Create a directory: outdir/{n}best_recog
+                ibest_writer = writer[f"{n}best_recog"]
+
+                # Write the result to each file
+                ibest_writer["token"][key] = " ".join(token)
+                ibest_writer["token_int"][key] = " ".join(map(str, token_int))
+                ibest_writer["score"][key] = str(hyp.score)
+
+                if text is not None:
+                    ibest_writer["text"][key] = text
+
+            # Write intermediate predictions to
+            # encoder_interctc_layer<layer_idx>.txt
+            ibest_writer = writer[f"1best_recog"]
+            ibest_writer["phone_token"][key] = " ".join(phone_results)
+            if encoder_interctc_res is not None:
+                for idx, text in encoder_interctc_res.items():
+                    ibest_writer[f"encoder_interctc_layer{idx}.txt"][key] = " ".join(
+                        text
+                    )
 
 
 def get_parser():
@@ -1035,7 +1130,13 @@ def get_parser():
         help="Input length ratio to obtain min output length",
     )
     group.add_argument(
-        "--ctc_weight",
+        "--char_ctc_weight",
+        type=float,
+        default=0.5,
+        help="CTC weight in joint decoding",
+    )
+    group.add_argument(
+        "--phone_ctc_weight",
         type=float,
         default=0.5,
         help="CTC weight in joint decoding",

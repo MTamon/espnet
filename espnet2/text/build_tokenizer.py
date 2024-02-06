@@ -10,12 +10,15 @@ from espnet2.text.phoneme_tokenizer import PhonemeTokenizer
 from espnet2.text.sentencepiece_tokenizer import SentencepiecesTokenizer
 from espnet2.text.whisper_tokenizer import OpenAIWhisperTokenizer
 from espnet2.text.word_tokenizer import WordTokenizer
+from espnet2.text.char_phoneme_tokenizer import CharPhonemeTokenizer
 
 
 def build_tokenizer(
     token_type: str,
     bpemodel: Union[Path, str, Iterable[str]] = None,
     non_linguistic_symbols: Union[Path, str, Iterable[str]] = None,
+    char_non_linguistic_symbols: Union[Path, str, Iterable[str]] = None,
+    phone_non_linguistic_symbols: Union[Path, str, Iterable[str]] = None,
     remove_non_linguistic_symbols: bool = False,
     space_symbol: str = "<space>",
     delimiter: str = None,
@@ -77,6 +80,15 @@ def build_tokenizer(
             non_linguistic_symbols=non_linguistic_symbols,
             space_symbol=space_symbol,
             remove_non_linguistic_symbols=remove_non_linguistic_symbols,
+        )
+        
+    elif token_type == "aux_phone":
+        return CharPhonemeTokenizer(
+            char_non_linguistic_symbols=char_non_linguistic_symbols,
+            phone_non_linguistic_symbols=phone_non_linguistic_symbols,
+            space_symbol=space_symbol,
+            remove_non_linguistic_symbols=remove_non_linguistic_symbols,
+            nonsplit_symbols=nonsplit_symbol,
         )
 
     elif "whisper" in token_type:
